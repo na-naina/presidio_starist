@@ -122,11 +122,10 @@ st_operator = st.sidebar.selectbox(
     - Encrypt: Replaces with an AES encryption of the PII string, allowing the process to be reversed
          """,
 )
-st_mask_char = "*"
-st_number_of_chars = 15
-st_encrypt_key = "WmZq4t7w!z%C&F)J"
+st_mask_char        = "*"
+st_number_of_chars  = 15
+st_encrypt_key      = "WmZq4t7w!z%C&F)J"
 
-open_ai_params = None
 
 logger.debug(f"st_operator: {st_operator}")
 
@@ -151,35 +150,49 @@ st_threshold = st.sidebar.slider(
 
 
 # Allow and deny lists
-st_deny_allow_expander = st.sidebar.expander(
-    "Allowlists and denylists",
-    expanded=False,
-)
+# ── Sidebar: Allow / Deny lists ────────────────────────────────────────
 
-with st_deny_allow_expander:
-    st_allow_list = st_tags(
-        label="Add words to the allowlist", text="Enter word and press enter."
+with st.sidebar.expander("Allowlists & Denylists", expanded=True):
+    allow_raw = st_tags(
+        label="Allowlist - never treat these as PII",
+        text="Type word and press ↩︎",
+        key="batch_allow_tags"          # ← UNIQUE KEY  (important!)
+    ) or []                       # ← always a list, even if None
+
+    deny_raw = st_tags(
+        label="Denylist - always treat these as PII",
+        text="Type word and press ↩︎",
+        key="batch_deny_tags"           # ← UNIQUE KEY
+    ) or []
+    
+    # These lines force the widgets to stay visible
+    _ = allow_raw
+    _ = deny_raw
+
+    # Optional visual feedback
+    if allow_raw:
+        st.caption(f"Current allowlist: {', '.join(allow_raw)}")
+    if deny_raw:
+        st.caption(f"Current denylist: {', '.join(deny_raw)}")
+        
+    allow_list = tuple(w.strip() for w in allow_raw if w.strip())
+    deny_list  = tuple(w.strip() for w in deny_raw  if w.strip())
+
+
+
+# --- Let the user choose the entity list once ---
+with st.sidebar.expander("Choose entities to look for", expanded=False):
+    # build the choices lazily (after model-selection but before run)
+    available_ents = get_supported_entities(*analyzer_params)
+    st_entities = st.multiselect(
+        "Which entities to look for?",
+        options=available_ents,
+        default=list(available_ents),
+        key="batch_entities"        # explicit key is good practice
     )
-    st.caption(
-        "Allowlists contain words that are not considered PII, but are detected as such."
-    )
-
-    st_deny_list = st_tags(
-        label="Add words to the denylist", text="Enter word and press enter."
-    )
-    st.caption(
-        "Denylists contain words that are considered PII, but are not detected as such."
-    )
 
 
-# Initialize debug log ──────────────────────────────────────────────────────
-# if "_debug_text" not in st.session_state:
-#     st.session_state._debug_text = ""
-
-# def log(msg: str):
-#     st.session_state._debug_text = st.session_state.get("_debug_text", "") + msg
-#     st.session_state._debug_log.text("📝 Debug log\n\n" + st.session_state._debug_text)
-
+########  Initialize debug log ##########
 if "_debug_text" not in st.session_state:
     st.session_state._debug_text = ""
     
@@ -187,11 +200,13 @@ if "_debug_text" not in st.session_state:
 def log(msg: str):
     """Append a message to the in-memory debug log."""
     st.session_state._debug_text += msg
+###########################################
 
 
-# ── SIDEBAR (optional clear-log button) ──────────────────────────────
-if st.sidebar.button("🧹 Clear debug log"):
-    st.session_state._debug_text = ""
+
+# # ── SIDEBAR (optional clear-log button) ──────────────────────────────
+# if st.sidebar.button("🧹 Clear debug log"):
+#     st.session_state._debug_text = ""
 
 
 
@@ -205,12 +220,37 @@ analyzer_load_state = st.info("Starting Presidio batch analyzer...")
 
 analyzer_load_state.empty()
 
+# ----- File uploader ------
+# keep a version counter in session_state
+if "file_key_version" not in st.session_state:
+    st.session_state.file_key_version = 0
+
+def _clear_files():
+    """Callback: wipe the current uploader and its files."""
+    st.session_state.file_key_version += 1          # → new key → fresh widget
+    # nothing else to reset; when the widget disappears its value is dropped
+
+uploader_key = f"batch_files_{st.session_state.file_key_version}"
 
 uploaded_files = st.file_uploader(
     "Select one or more files",
-    type=["txt", "csv", "tsv", "docx"],
+    type=["txt", "csv", "tsv", "docx", "xlsx", "xls", "log", "jsonl"],
     accept_multiple_files=True,
+    key=uploader_key,
 )
+
+cols = st.columns([1, 0.09])
+with cols[1]:
+#     # 🗑 Unicode U+1F5D1 (Trash Can) – pick any icon you like
+    st.button("🗑", on_click=_clear_files, help="Remove all selected files")
+# -------------------------
+
+
+# uploaded_files = st.file_uploader(
+#     "Select one or more files",
+#     type=["txt", "csv", "tsv", "docx"],
+#     accept_multiple_files=True,
+# )
 run_btn = st.button("🚀 Anonymize")
 
 
@@ -254,7 +294,7 @@ def file_to_text(upload, encoding: str | None = None) -> str:
 
     if len(raw) > MAX_BYTES:
         msg = f"{name}: file is too large ({len(raw)/1e6:.1f} MB)"
-        st.session_state._debug_log.write(f"❌ {msg}\n")
+        log(f"❌ {msg}\n")
         raise ValueError(msg)
 
 
@@ -270,7 +310,7 @@ def file_to_text(upload, encoding: str | None = None) -> str:
                 continue
         tried = ", ".join(trials)
         msg = f"{name}: could not decode – tried {tried}"
-        st.session_state._debug_log.write(f"❌ {msg}\n")
+        log(f"❌ {msg}\n")
         raise UnicodeDecodeError(f"{name}: could not decode - tried {tried}")
 
 
@@ -295,7 +335,7 @@ def file_to_text(upload, encoding: str | None = None) -> str:
             return docx2txt.process(io.BytesIO(raw)).strip()
         except ModuleNotFoundError as exc:
             msg = (f"{name}: cannot read - neither `python-docx` nor `docx2txt` available")
-            st.session_state._debug_log.write(f"❌ {msg}\n")
+            log(f"❌ {msg}\n")
             raise ValueError(msg) from exc
 
 
@@ -310,13 +350,16 @@ def file_to_text(upload, encoding: str | None = None) -> str:
 
     # 4️⃣ Fallback --------------------------------------------------------------
     msg = f"{name}: unsupported file type ({suffix or 'no suffix'})"
-    st.session_state._debug_log.write(f"❌ {msg}\n")
+    log(f"❌ {msg}\n")
     raise ValueError(msg)
 
 
 
 
-
+#### Starting Analyzer Engine #####
+analyzer_load_state = st.info("Starting Presidio analyzer...")
+analyzer = analyzer_engine(*analyzer_params)
+analyzer_load_state.empty()
 
 
 
@@ -331,11 +374,6 @@ if run_btn:
     work_dir = Path(tempfile.mkdtemp())
     out_dir = work_dir / "anonymized"
     out_dir.mkdir(exist_ok=True)
-
-    # Starting analyzer engine
-    analyzer_load_state = st.info("Starting Presidio analyzer...")
-    analyzer = analyzer_engine(*analyzer_params)
-    analyzer_load_state.empty()
     
     # Number of files
     total = len(uploaded_files)
@@ -350,19 +388,8 @@ if run_btn:
         
         if st_text is None:
             continue  # failure already logged
-
-
-        # THIS MAY NOT WORK AS EXPECTED IN THE BATCH MODE
-        # Choose entities
-        st_entities_expander = st.sidebar.expander("Choose entities to look for")
-        st_entities = st_entities_expander.multiselect(
-            label="Which entities to look for?",
-            options=get_supported_entities(*analyzer_params),
-            default=list(get_supported_entities(*analyzer_params)),
-            help="Limit the list of PII entities detected. "
-            "This list is dynamic and based on the NER model and registered recognizers. "
-            "More information can be found here: https://microsoft.github.io/presidio/analyzer/adding_recognizers/",
-        )
+        
+        log(f"✔ {uf.name} – read {len(st_text)/1e3:.1f} kB\n")
 
         # ---------- ANALYZE ----------
         st_analyze_results = analyze(
@@ -372,8 +399,8 @@ if run_btn:
             language="en",
             score_threshold=st_threshold,
             return_decision_process=False,
-            allow_list=st_allow_list,
-            deny_list=st_deny_list,
+            allow_list=allow_list,
+            deny_list=deny_list,
         )
 
         # ---------- ANONYMIZE ----------
@@ -386,6 +413,8 @@ if run_btn:
                 encrypt_key=st_encrypt_key,
                 analyze_results=st_analyze_results,
             )
+        else:
+            raise ValueError(f"Operator {st_operator} not supported for batch anonymization.")
 
 
         # write output
@@ -464,17 +493,19 @@ if run_btn:
 
     ts = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
     st.success("Finished ✔ Files written next to the originals and bundled below.")
-    st.download_button(
-        "⬇ Download anonymized files (.zip)",
-        data=buf,
-        file_name=f"anonymized_{ts}.zip",
-        mime="application/zip",
-    )
+    col1, col2, col3 = st.columns([1, 1, 1])
+    with col2:
+        st.download_button(
+            "⬇ Download anonymized files (.zip)",
+            data=buf,
+            file_name=f"anonymized_{ts}.zip",
+            mime="application/zip",
+        )
 
     # remember temp dir → will be cleaned on session end
     st.session_state.setdefault("_tmp_dirs", []).append(work_dir)
     import atexit
     atexit.register(lambda: shutil.rmtree(work_dir, ignore_errors=True))
     
-    with st.expander("📝 Debug log", expanded=False):
+    with st.expander("📝 Log", expanded=False):
         st.text(st.session_state.get("_debug_text", ""))
