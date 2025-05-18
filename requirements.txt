@@ -12,4 +12,6 @@ openai
 watchdog
 python-docx
 PyPDF2
+openpyxl
+xlrd
 #azure-ai-textanalytics

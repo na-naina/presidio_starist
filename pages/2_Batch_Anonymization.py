@@ -9,7 +9,7 @@ from __future__ import annotations
 import datetime as _dt
 import logging
 import dotenv
-import os, io
+import os, io, re
 import sys
 import shutil
 import tempfile
@@ -39,15 +39,18 @@ from presidio_helpers import (
 # ---------------------------------------------------------------------------
 # CONSTANTS
 # ---------------------------------------------------------------------------
-TEXT_SUFFIXES   = {".txt", ".csv", ".tsv", ".log", ".jsonl"}
+TEXT_SUFFIXES = {".txt", ".csv", ".tsv", ".log", ".jsonl"}
 ENCODING_TRIALS = ("utf-8", "utf-8-sig", "cp1252", "latin-1")  # tweak to taste
-MAX_BYTES       = 20 * 1024 * 1024      # 20 MB safety net
+MAX_BYTES       = 40 * 1024 * 1024      # 40 MB safety net
 
 
 dotenv.load_dotenv()
 logger = logging.getLogger("presidio-streamlit")
 
 allow_other_models = os.getenv("ALLOW_OTHER_MODELS", False)
+
+
+
 
 # ---------------------------------------------------------------------------
 # ────────────────────────────── SIDEBAR UI ─────────────────────────────────
@@ -105,6 +108,7 @@ st.sidebar.warning("Note: Models might take some time to download. ")
 analyzer_params = (st_model_package, st_model, st_ta_key, st_ta_endpoint)
 logger.debug(f"analyzer_params: {analyzer_params}")
 #######################################################################
+
 
 
 st_operator = st.sidebar.selectbox(
@@ -175,8 +179,8 @@ with st.sidebar.expander("Allowlists & Denylists", expanded=True):
     if deny_raw:
         st.caption(f"Current denylist: {', '.join(deny_raw)}")
         
-    allow_list = tuple(w.strip() for w in allow_raw if w.strip())
-    deny_list  = tuple(w.strip() for w in deny_raw  if w.strip())
+    allow_list = list(w.strip() for w in allow_raw if w.strip())
+    deny_list  = list(w.strip() for w in deny_raw  if w.strip())
 
 
 
@@ -204,9 +208,15 @@ def log(msg: str):
 
 
 
-# # ── SIDEBAR (optional clear-log button) ──────────────────────────────
+# # ── SIDEBAR (optional clear-log button) ──────────
 # if st.sidebar.button("🧹 Clear debug log"):
 #     st.session_state._debug_text = ""
+
+
+
+
+
+
 
 
 
@@ -255,19 +265,70 @@ run_btn = st.button("🚀 Anonymize")
 
 
 
-# Helper ─────────────────────────────────────────────────────────────────────
-
-# ---------------------------------------------------------------------------
-# CONSTANTS
-# ---------------------------------------------------------------------------
-TEXT_SUFFIXES = {".txt", ".csv", ".tsv", ".log", ".jsonl"}
-ENCODING_TRIALS = ("utf-8", "utf-8-sig", "cp1252", "latin-1")  # tweak to taste
-MAX_BYTES = 20 * 1024 * 1024      # 20 MB safety net
-
 
 # ---------------------------------------------------------------------------
 # MAIN
 # ---------------------------------------------------------------------------
+MARKER_TOKEN = "§§§"          # any string that will *never* be produced by Presidio
+def _escape_markers(txt: str) -> str:
+    return txt.replace("<<<sheet:", f"{MARKER_TOKEN}sheet:")
+def _unescape_markers(txt: str) -> str:
+    return txt.replace(f"{MARKER_TOKEN}sheet:", "<<<sheet:")
+
+def _clean_for_flair(txt: str) -> str:
+    """
+    Remove control chars and normalise whitespace so that every token Flair
+    creates is guaranteed to be found back inside the string.
+    """
+    # 1⃣ Strip NULs and other C0 controls except \n \t
+    txt = re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", txt)
+
+    # 2⃣ Convert tabs + CR-LF combos to single spaces / newlines
+    txt = txt.replace("\r\n", "\n").replace("\r", "\n").replace("\t", " ")
+
+    # 3⃣ Collapse runs of whitespace to a single space (keeps \n)
+    txt = re.sub(r"[ \u00a0]+", " ", txt)          # nbsp too
+    txt = re.sub(r"\n{3,}", "\n\n", txt)           # no >2 blank lines
+
+    return txt.strip()
+
+def text_to_excel(text: str, path: Path):
+    """
+    Rebuild an Excel workbook from the flattened string we produced in
+    file_to_text().  •Each <<<sheet:name>>> marker starts a new sheet.
+    Cells are reconstructed via pandas.read_csv().
+    """
+    # ➊ split *including* sheet markers
+    parts = re.split(r"\n?<<<sheet:(.+?)>>>\n?", text)
+    # parts = ["", sheet1, csv1, sheet2, csv2, …]
+
+    if len(parts) < 3:                     # no sheet markers ⇒ nothing to save
+        pd.read_csv(io.StringIO(text)).to_excel(path, index=False)
+        return
+        #raise ValueError("No sheet data found – cannot rebuild Excel file")
+
+
+    wb = pd.ExcelWriter(path, engine="openpyxl")
+
+    # ➋ iterate over pairs (sheet, csv)
+    for i in range(1, len(parts), 2):
+        sheet_name = parts[i][:31] or f"Sheet{i//2+1}"
+        csv_block  = parts[i + 1].strip()
+
+        if not csv_block:                  # skip completely empty sheets
+            continue
+
+        df = pd.read_csv(io.StringIO(csv_block))
+        df.to_excel(wb, sheet_name=sheet_name, index=False)
+
+    wb.close()
+
+    # ➌ Make sure we wrote at least one visible sheet
+    if not Path(path).stat().st_size:
+        # The file is 0 B ↦ nothing was written (all sheets empty → wb.close() removed them)
+        raise ValueError("Workbook ended up with no visible sheets")
+
+
 def file_to_text(upload, encoding: str | None = None) -> str:
     """
     Convert a Streamlit UploadedFile (or any file-like obj with .read/.getvalue)
@@ -297,25 +358,8 @@ def file_to_text(upload, encoding: str | None = None) -> str:
         log(f"❌ {msg}\n")
         raise ValueError(msg)
 
-
-    # 1. Plain-text family -----------------------------------------------------
-    if suffix in TEXT_SUFFIXES:
-        trials = [encoding] if encoding else []   # user-override first
-        trials += [enc for enc in ENCODING_TRIALS if enc != encoding]
-
-        for enc in trials:
-            try:
-                return raw.decode(enc)
-            except UnicodeDecodeError:
-                continue
-        tried = ", ".join(trials)
-        msg = f"{name}: could not decode – tried {tried}"
-        log(f"❌ {msg}\n")
-        raise UnicodeDecodeError(f"{name}: could not decode - tried {tried}")
-
-
-    # 2. .docx -----------------------------------------------------------------
-    if suffix == ".docx":
+    # 1. .docx -----------------------------------------------------------------
+    if suffix == ".docx" or suffix == ".doc":
         # Option A – high-fidelity paragraph+table text with python-docx
         try:
             doc = _docx.Document(io.BytesIO(raw))
@@ -338,17 +382,44 @@ def file_to_text(upload, encoding: str | None = None) -> str:
             log(f"❌ {msg}\n")
             raise ValueError(msg) from exc
 
-
-    # 3. .xlsx / .xls (optional) ----------------------------------------------
+    # 2. .xlsx / .xls --------------------------------------------------
     if suffix in {".xlsx", ".xls"}:
         try:
-            df = pd.read_excel(io.BytesIO(raw), sheet_name=None)
-            return "\n\n".join(df[s].to_csv(index=False) for s in df)
-        except ModuleNotFoundError as exc:
-            raise ValueError("`pandas` and `openpyxl` are required for Excel.") from exc
+            # read all sheets into a dict[ sheet-name → DataFrame ]
+            sheets = pd.read_excel(io.BytesIO(raw), sheet_name=None, engine=None)
+            if not sheets:                       # empty workbook
+                raise ValueError(f"{name}: workbook has no sheets")
+        except Exception as exc:
+            msg = f"{name}: cannot read – {exc}"
+            log(f"❌ {msg}\n")
+            raise ValueError(msg) from exc
+
+        # Flatten every sheet into CSV-ish lines; keep sheet name as a header
+        parts: list[str] = []
+        for sheet_name, df in sheets.items():
+            parts.append(f"<<<sheet:{sheet_name}>>>")
+            parts.append(df.to_csv(index=False, lineterminator="\n"))
+        return "\n".join(parts)
 
 
-    # 4️⃣ Fallback --------------------------------------------------------------
+
+    # 3. Plain-text family -----------------------------------------------------
+    if suffix in TEXT_SUFFIXES:
+        trials = [encoding] if encoding else []   # user-override first
+        trials += [enc for enc in ENCODING_TRIALS if enc != encoding]
+
+        for enc in trials:
+            try:
+                return raw.decode(enc)
+            except UnicodeDecodeError:
+                continue
+        tried = ", ".join(trials)
+        msg = f"{name}: could not decode – tried {tried}"
+        log(f"❌ {msg}\n")
+        raise UnicodeDecodeError(f"{name}: could not decode - tried {tried}")
+
+
+    # 4. Fallback --------------------------------------------------------------
     msg = f"{name}: unsupported file type ({suffix or 'no suffix'})"
     log(f"❌ {msg}\n")
     raise ValueError(msg)
@@ -385,16 +456,20 @@ if run_btn:
         
         # File to text
         st_text = file_to_text(uf)
+        st_text  = _escape_markers(st_text)
         
         if st_text is None:
             continue  # failure already logged
         
         log(f"✔ {uf.name} – read {len(st_text)/1e3:.1f} kB\n")
+        
+        # Clean only if we are using a Flair model
+        text_for_nlp = _clean_for_flair(st_text) if st_model_package.lower() == "flair" else st_text
 
         # ---------- ANALYZE ----------
         st_analyze_results = analyze(
             *analyzer_params,
-            text=st_text,
+            text=text_for_nlp,
             entities=st_entities,
             language="en",
             score_threshold=st_threshold,
@@ -406,7 +481,7 @@ if run_btn:
         # ---------- ANONYMIZE ----------
         if st_operator not in ("highlight", "synthesize"):
             st_anonymize_results = anonymize(
-                text=st_text,
+                text=text_for_nlp,
                 operator=st_operator,
                 mask_char=st_mask_char,
                 number_of_chars=st_number_of_chars,
@@ -416,6 +491,8 @@ if run_btn:
         else:
             raise ValueError(f"Operator {st_operator} not supported for batch anonymization.")
 
+
+        clean_text = _unescape_markers(st_anonymize_results.text)
 
         # write output
         out_path = out_dir / uf.name
@@ -448,18 +525,16 @@ if run_btn:
             # Save as JSONL
             out_path = out_path.with_suffix(".jsonl")
             df.to_json(out_path, orient="records", lines=True)
-        elif uf.name.endswith(".xlsx"):
-            # Convert to DataFrame
-            df = pd.DataFrame(st_anonymize_results.text)
-            # Save as Excel
-            out_path = out_path.with_suffix(".xlsx")
-            df.to_excel(out_path, index=False)
-        elif uf.name.endswith(".xls"):
-            # Convert to DataFrame
-            df = pd.DataFrame(st_anonymize_results.text)
-            # Save as Excel
-            out_path = out_path.with_suffix(".xls")
-            df.to_excel(out_path, index=False)
+        elif uf.name.endswith((".xlsx", ".xls")):
+            # ——— DEBUG TRACE ————————————————————————————————
+            log("• first 120 chars BEFORE rebuild:\n"
+                f"{clean_text[:120]!r}\n\n")
+            # ————————————————————————————————————————————————
+            try:
+                text_to_excel(clean_text, out_path.with_suffix(".xlsx"))
+            except ValueError as exc:
+                log(f"⚠️  {uf.name}: {exc} – keeping original file\n")
+                out_path.write_bytes(uf.getvalue())
         elif uf.name.endswith(".doc"):
             # Create a new Document
             doc = _docx.Document()
