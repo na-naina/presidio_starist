@@ -46,7 +46,11 @@ allow_other_models = os.getenv("ALLOW_OTHER_MODELS", False)
 # ---------------------------------------------------------------------------
 # SIDEBAR UI
 # ---------------------------------------------------------------------------
-st.sidebar.header("Batch Anonymization - Presidio")
+st.sidebar.header(
+    """Settings
+Batch Anonymization - Presidio.
+"""
+)
 
 model_help_text = """
 Select which Named Entity Recognition (NER) model to use for PII detection, in parallel to rule-based recognizers.

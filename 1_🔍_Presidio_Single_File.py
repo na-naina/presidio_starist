@@ -24,13 +24,53 @@ from presidio_helpers import (
 )
 
 st.set_page_config(
-    page_title="Presidio demo",
+    page_title="Presidio - Single File De-identification",
     layout="wide",
+    page_icon="🔐",
     initial_sidebar_state="expanded",
     menu_items={
         "About": "https://microsoft.github.io/presidio/",
     },
 )
+
+# ── Partner logos & STAR banner ──────────────────────────────────────────
+# Put the *.png / *.svg logos in an `images/` folder next to the app, or
+# replace the local paths with https URLs to hosted images.
+
+import base64
+from pathlib import Path
+from PIL import Image
+
+
+# Load and encode image in base64
+logo_path = Path("images/logos.png")
+if logo_path.exists():
+    with open(logo_path, "rb") as f:
+        encoded = base64.b64encode(f.read()).decode()
+
+    st.markdown(
+        f"""
+        <div style="display: flex; justify-content: center; align-items: center; padding: 1rem 0;">
+            <img src="data:image/png;base64,{encoded}" style="height:100px;">
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+else:
+    st.image("images/logos.png", use_container_width=False, width=600)
+
+st.markdown(
+    """
+    <div style="padding:0.6rem 0 1rem 0; text-align:center; font-size:1.1rem;">
+        <b>This application is a demonstration for the
+        <span style="color:#4169E1;">STAR Project 25/26</span>:</b>
+        <p>STARIST: Stalking Threat AI Recognition (and) Identification Support Tool</p>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+# ─────────────────────────────────────────────────────────────────────────
+
 
 dotenv.load_dotenv()
 logger = logging.getLogger("presidio-streamlit")
@@ -44,8 +84,8 @@ allow_other_models = os.getenv("ALLOW_OTHER_MODELS", False)
 # Sidebar
 ###########
 st.sidebar.header(
-    """
-PII De-Identification with [Microsoft Presidio](https://microsoft.github.io/presidio/)
+    """Settings
+PII De-Identification with [Microsoft Presidio](https://microsoft.github.io/presidio/).
 """
 )
 
@@ -259,10 +299,12 @@ with st.expander("About this demo", expanded=False):
 
     st.info(
         """
-    Use this demo to:
-    - Experiment with different off-the-shelf models and NLP packages.
-    - Explore the different de-identification options, including redaction, masking, encryption and more.
-    - Configure allow and deny lists.
+    This demo was extended to include the following features:
+    - Support batch anonymization.
+    - Support multiple file formats (docx, xlsx, txt, *csv, *json).
+    - Support for multiple NER models (spaCy, Stanza, Huggingface, Flair) 
+    
+    The original demo can be found [here](https://huggingface.co/spaces/presidio/presidio_demo)
     """
     )
 
