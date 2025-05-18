@@ -10,4 +10,6 @@ torch
 flair
 openai
 watchdog
+python-docx
+PyPDF2
 #azure-ai-textanalytics

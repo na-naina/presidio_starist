@@ -39,7 +39,10 @@ logger = logging.getLogger("presidio-streamlit")
 allow_other_models = os.getenv("ALLOW_OTHER_MODELS", False)
 
 
+
+##########
 # Sidebar
+###########
 st.sidebar.header(
     """
 PII De-Identification with [Microsoft Presidio](https://microsoft.github.io/presidio/)
@@ -49,8 +52,7 @@ PII De-Identification with [Microsoft Presidio](https://microsoft.github.io/pres
 
 model_help_text = """
     Select which Named Entity Recognition (NER) model to use for PII detection, in parallel to rule-based recognizers.
-    Presidio supports multiple NER packages off-the-shelf, such as spaCy, Huggingface, Stanza and Flair,
-    as well as service such as Azure Text Analytics PII.
+    Presidio supports multiple NER packages off-the-shelf, such as spaCy, Huggingface, Stanza and Flair.
     """
 st_ta_key = st_ta_endpoint = ""
 
@@ -93,75 +95,11 @@ if st_model == "Other":
 
 st.sidebar.warning("Note: Models might take some time to download. ")
 
+
 analyzer_params = (st_model_package, st_model, st_ta_key, st_ta_endpoint)
 logger.debug(f"analyzer_params: {analyzer_params}")
 
 
-# ── Batch anonymisation without Tk ───────────────────────────────────────
-with st.sidebar.expander(
-        "📂 Batch anonymisation (upload → download ZIP)", expanded=False):
-
-    uploaded = st.file_uploader(
-        "Pick one or more text-based files",
-        accept_multiple_files=True,
-        type=None,  # ["txt", "csv", "json", "xml", "xlsx"],
-        help="Drag-and-drop or click to browse",
-    )
-
-    replace_token = st.text_input(
-        "Replacement token when operator = replace",
-        value="<ANON>",
-        key="batch_token",
-    )
-
-    run_btn = st.button("Run on uploaded files")
-
-    if run_btn:
-        if not uploaded:
-            st.warning("No files uploaded yet.")
-            st.stop()
-
-        # build (or reuse) the same analyzer as the single-file path
-        eng = analyzer_engine(*analyzer_params)
-
-        from io import BytesIO
-        import zipfile, datetime
-
-        zip_buffer = BytesIO()
-        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-            for file in uploaded:
-                try:
-                    text = file.getvalue().decode("utf-8", errors="ignore")
-                    findings = analyze(
-                        *analyzer_params,
-                        text=text,
-                        entities=get_supported_entities(*analyzer_params),
-                        language="en",
-                        score_threshold=st_threshold,
-                    )
-                    anonymised = anonymize(
-                        text=text,
-                        operator=st_operator,              # redact / replace / …
-                        mask_char=st_mask_char,
-                        number_of_chars=st_number_of_chars,
-                        encrypt_key=st_encrypt_key,
-                        analyze_results=findings,
-                    ).text
-                    new_name = Path(file.name).stem + "_anon" + Path(file.name).suffix
-                    zf.writestr(new_name, anonymised)
-                except Exception as ex:
-                    st.error(f"{file.name}: {ex}")
-
-        zip_buffer.seek(0)
-        ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-        st.download_button(
-            label="💾 Download anonymised files",
-            data=zip_buffer,
-            file_name=f"presidio_anonymised_{ts}.zip",
-            mime="application/zip",
-        )
-        st.success("Finished – use the button above to save your ZIP archive.")
-# ─────────────────────────────────────────────────────────────────────────
 
 st_operator = st.sidebar.selectbox(
     "De-identification approach",
