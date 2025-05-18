@@ -7,7 +7,10 @@ then download all anonymized versions in a ZIP.
 from __future__ import annotations
 
 import datetime as _dt
-import io
+import logging
+import dotenv
+import os, io
+import sys
 import shutil
 import tempfile
 import zipfile
@@ -16,145 +19,310 @@ from typing import Iterable, List, Optional
 
 import pandas as pd
 import streamlit as st
+from streamlit_tags import st_tags
+
+# To Read docx files
+import docx as _docx
+#from docx import Document
+import docx2txt
 
 from presidio_helpers import (
-    analyzer_engine,
+    get_supported_entities,
     analyze,
     anonymize,
+    annotate,
     create_fake_data,
-    get_supported_entities,  # NEW – for the multiselect
+    analyzer_engine,
 )
-from openai_fake_data_generator import OpenAIParams
+
+
+# ---------------------------------------------------------------------------
+# CONSTANTS
+# ---------------------------------------------------------------------------
+TEXT_SUFFIXES   = {".txt", ".csv", ".tsv", ".log", ".jsonl"}
+ENCODING_TRIALS = ("utf-8", "utf-8-sig", "cp1252", "latin-1")  # tweak to taste
+MAX_BYTES       = 20 * 1024 * 1024      # 20 MB safety net
+
+
+dotenv.load_dotenv()
+logger = logging.getLogger("presidio-streamlit")
+
+allow_other_models = os.getenv("ALLOW_OTHER_MODELS", False)
 
 # ---------------------------------------------------------------------------
 # ────────────────────────────── SIDEBAR UI ─────────────────────────────────
 # ---------------------------------------------------------------------------
-st.sidebar.header("Batch anonymization settings")
+st.sidebar.header("Batch Anonymization - Presidio")
 
-# Re‑use model choice from the single‑file page (stored in session‑state)
-model_pkg: str = st.session_state.get("st_model_package", "spaCy")
-model_name: str = st.session_state.get("st_model", "en_core_web_lg")
+#######################################################################
+# Model Selection
+#######################################################################
+model_help_text = """
+    Select which Named Entity Recognition (NER) model to use for PII detection, in parallel to rule-based recognizers.
+    Presidio supports multiple NER packages off-the-shelf, such as spaCy, Huggingface, Stanza and Flair.
+    """
+st_ta_key = st_ta_endpoint = ""
 
-op = st.sidebar.selectbox(
-    "De‑identification operator",
-    [
-        "redact",
-        "replace",
-        "synthesize",
-        "mask",
-        "hash",
-        "encrypt",
-    ],
+model_list = [
+    "spaCy/en_core_web_lg",
+    "flair/ner-english-large",
+    "HuggingFace/obi/deid_roberta_i2b2",
+    "HuggingFace/StanfordAIMI/stanford-deidentifier-base",
+    "stanza/en",
+    "Other",
+]
+if not allow_other_models:
+    model_list.pop()
+# Select model
+st_model = st.sidebar.selectbox(
+    "NER model package",
+    model_list,
     index=1,
-)
-replace_tok = st.sidebar.text_input("Replacement token", "<ANON>")
-mask_char = st.sidebar.text_input("Mask character", "*") if op == "mask" else None
-mask_len = (
-    st.sidebar.number_input("Mask length", 15, 0, 200) if op == "mask" else None
-)
-enc_key = st.sidebar.text_input("AES key", "WmZq4t7w!z%C&F)J") if op == "encrypt" else None
-threshold = st.sidebar.slider("Acceptance threshold", 0.0, 1.0, 0.35)
-
-# Entity picker (NEW – fixes NoneType bug)
-try:
-    supported_ents: List[str] = get_supported_entities(model_pkg, model_name, "", "")
-except Exception:
-    supported_ents = []
-
-st_entities: List[str] = st.sidebar.multiselect(
-    "Entities to look for (leave empty for ALL)",
-    options=supported_ents,
-    default=supported_ents,
+    help=model_help_text,
 )
 
-# OpenAI synthesis parameters ------------------------------------------------
-openai_params: Optional[OpenAIParams] = None
-if op == "synthesize":
 
-    def _collect_openai_params() -> OpenAIParams:
-        api_type = st.sidebar.selectbox("OpenAI API type", ["openai", "azure"], 0)
-        api_key = st.sidebar.text_input("OPENAI_KEY", type="password")
-        model = st.sidebar.text_input("Model", "gpt-3.5-turbo-instruct")
-        base = (
-            st.sidebar.text_input("Azure endpoint") if api_type == "azure" else None
-        )
-        deployment = (
-            st.sidebar.text_input("Deployment name") if api_type == "azure" else ""
-        )
-        version = (
-            st.sidebar.text_input("API version", "2023-05-15")
-            if api_type == "azure"
-            else None
-        )
-        return OpenAIParams(
-            openai_key=api_key,
-            model=model,
-            api_base=base,
-            deployment_id=deployment,
-            api_version=version,
-            api_type=api_type,
-        )
 
-    openai_params = _collect_openai_params()
+# Extract model package.
+st_model_package = st_model.split("/")[0]
+
+# Remove package prefix (if needed)
+st_model = (
+    st_model
+    if st_model_package.lower() not in ("spacy", "stanza", "huggingface")
+    else "/".join(st_model.split("/")[1:])
+)
+
+if st_model == "Other":
+    st_model_package = st.sidebar.selectbox(
+        "NER model OSS package", options=["spaCy", "stanza", "Flair", "HuggingFace"]
+    )
+    st_model = st.sidebar.text_input(f"NER model name", value="")
+
+
+st.sidebar.warning("Note: Models might take some time to download. ")
+
+analyzer_params = (st_model_package, st_model, st_ta_key, st_ta_endpoint)
+logger.debug(f"analyzer_params: {analyzer_params}")
+#######################################################################
+
+
+st_operator = st.sidebar.selectbox(
+    "De-identification approach",
+    ["redact", "replace", "synthesize", "highlight", "mask", "hash", "encrypt"],
+    index=1,
+    help="""
+    Select which manipulation to the text is requested after PII has been identified.\n
+    - Redact: Completely remove the PII text\n
+    - Replace: Replace the PII text with a constant, e.g. <PERSON>\n
+    - Synthesize: Replace with fake values (requires an OpenAI key)\n
+    - Highlight: Shows the original text with PII highlighted in colors\n
+    - Mask: Replaces a requested number of characters with an asterisk (or other mask character)\n
+    - Hash: Replaces with the hash of the PII string\n
+    - Encrypt: Replaces with an AES encryption of the PII string, allowing the process to be reversed
+         """,
+)
+st_mask_char = "*"
+st_number_of_chars = 15
+st_encrypt_key = "WmZq4t7w!z%C&F)J"
+
+open_ai_params = None
+
+logger.debug(f"st_operator: {st_operator}")
+
+
+if st_operator == "mask":
+    st_number_of_chars = st.sidebar.number_input(
+        "number of chars", value=st_number_of_chars, min_value=0, max_value=100
+    )
+    st_mask_char = st.sidebar.text_input(
+        "Mask character", value=st_mask_char, max_chars=1
+    )
+elif st_operator == "encrypt":
+    st_encrypt_key = st.sidebar.text_input("AES key", value=st_encrypt_key)
+
+st_threshold = st.sidebar.slider(
+    label="Acceptance threshold",
+    min_value=0.0,
+    max_value=1.0,
+    value=0.35,
+    help="Define the threshold for accepting a detection as PII. See more here: ",
+)
+
+
+# Allow and deny lists
+st_deny_allow_expander = st.sidebar.expander(
+    "Allowlists and denylists",
+    expanded=False,
+)
+
+with st_deny_allow_expander:
+    st_allow_list = st_tags(
+        label="Add words to the allowlist", text="Enter word and press enter."
+    )
+    st.caption(
+        "Allowlists contain words that are not considered PII, but are detected as such."
+    )
+
+    st_deny_list = st_tags(
+        label="Add words to the denylist", text="Enter word and press enter."
+    )
+    st.caption(
+        "Denylists contain words that are considered PII, but are not detected as such."
+    )
+
+
+# Initialize debug log ──────────────────────────────────────────────────────
+# if "_debug_text" not in st.session_state:
+#     st.session_state._debug_text = ""
+
+# def log(msg: str):
+#     st.session_state._debug_text = st.session_state.get("_debug_text", "") + msg
+#     st.session_state._debug_log.text("📝 Debug log\n\n" + st.session_state._debug_text)
+
+if "_debug_text" not in st.session_state:
+    st.session_state._debug_text = ""
+    
+
+def log(msg: str):
+    """Append a message to the in-memory debug log."""
+    st.session_state._debug_text += msg
+
+
+# ── SIDEBAR (optional clear-log button) ──────────────────────────────
+if st.sidebar.button("🧹 Clear debug log"):
+    st.session_state._debug_text = ""
+
+
+
 
 # ---------------------------------------------------------------------------
 # ────────────────────────────── MAIN AREA ──────────────────────────────────
 # ---------------------------------------------------------------------------
-st.title("📂 Batch Anonymization")
+st.title("📂 Batch Anonymization")
+
+analyzer_load_state = st.info("Starting Presidio batch analyzer...")
+
+analyzer_load_state.empty()
+
 
 uploaded_files = st.file_uploader(
     "Select one or more files",
     type=["txt", "csv", "tsv", "docx"],
     accept_multiple_files=True,
 )
-run_btn = st.button("🚀 Anonymize")
+run_btn = st.button("🚀 Anonymize")
+
+
 
 # Helper ─────────────────────────────────────────────────────────────────────
 
-def file_to_text(uf: "UploadedFile") -> Optional[str]:
-    """Read the contents of *uf* according to its suffix and return a str.
-    Supports utf‑8 plain text and Word (.docx).
-    Returns **None** if the file cannot be read.
+# ---------------------------------------------------------------------------
+# CONSTANTS
+# ---------------------------------------------------------------------------
+TEXT_SUFFIXES = {".txt", ".csv", ".tsv", ".log", ".jsonl"}
+ENCODING_TRIALS = ("utf-8", "utf-8-sig", "cp1252", "latin-1")  # tweak to taste
+MAX_BYTES = 20 * 1024 * 1024      # 20 MB safety net
+
+
+# ---------------------------------------------------------------------------
+# MAIN
+# ---------------------------------------------------------------------------
+def file_to_text(upload, encoding: str | None = None) -> str:
     """
-    name = uf.name
-    suffix = Path(name).suffix.lower()
-    try:
-        if suffix in {".txt", ".csv", ".tsv"}:  # naive – all read as text
-            return uf.getvalue().decode("utf-8", errors="ignore")
-        elif suffix == ".docx":
+    Convert a Streamlit UploadedFile (or any file-like obj with .read/.getvalue)
+    into **plain text**.
+
+    Parameters
+    ----------
+    upload : streamlit.runtime.uploaded_file_manager.UploadedFile | BinaryIO
+        The uploaded object.
+    encoding : str | None
+        Force a specific encoding for text files; None → try a fallback list.
+
+    Raises
+    ------
+    ValueError : if the file type is not supported or required libs are missing
+    UnicodeDecodeError : if none of the encodings work on a text file
+    """
+
+
+    # 0. Name / size checks
+    name    = getattr(upload, "name", "stream")
+    suffix  = (Path(name).suffix or "").lower()
+    raw     = upload.getvalue() if hasattr(upload, "getvalue") else upload.read()
+
+    if len(raw) > MAX_BYTES:
+        msg = f"{name}: file is too large ({len(raw)/1e6:.1f} MB)"
+        st.session_state._debug_log.write(f"❌ {msg}\n")
+        raise ValueError(msg)
+
+
+    # 1. Plain-text family -----------------------------------------------------
+    if suffix in TEXT_SUFFIXES:
+        trials = [encoding] if encoding else []   # user-override first
+        trials += [enc for enc in ENCODING_TRIALS if enc != encoding]
+
+        for enc in trials:
             try:
-                import docx2txt as _d2t
+                return raw.decode(enc)
+            except UnicodeDecodeError:
+                continue
+        tried = ", ".join(trials)
+        msg = f"{name}: could not decode – tried {tried}"
+        st.session_state._debug_log.write(f"❌ {msg}\n")
+        raise UnicodeDecodeError(f"{name}: could not decode - tried {tried}")
 
-                # Write to a temp file because docx2txt works with paths
-                with tempfile.NamedTemporaryFile(suffix=".docx") as tmp:
-                    tmp.write(uf.getvalue())
-                    tmp.flush()
-                    return _d2t.process(tmp.name)
-            except ImportError:
-                try:
-                    import docx as _docx
 
-                    doc = _docx.Document(io.BytesIO(uf.getvalue()))
-                    return "\n".join(p.text for p in doc.paragraphs)
-                except ImportError:
-                    raise ValueError(
-                        "python‑docx/docx2txt not installed – cannot read .docx"
-                    )
-        else:
-            raise ValueError(f"Unsupported file type: {suffix}")
-    except Exception as ex:
-        st.session_state._debug_log.write(f"❌ {name}: {ex}\n")
-        return None
+    # 2. .docx -----------------------------------------------------------------
+    if suffix == ".docx":
+        # Option A – high-fidelity paragraph+table text with python-docx
+        try:
+            doc = _docx.Document(io.BytesIO(raw))
+            parts: list[str] = [p.text for p in doc.paragraphs]
+            for tbl in doc.tables:                           # grab tables too
+                for row in tbl.rows:
+                    parts.extend(cell.text for cell in row.cells)
+            # print documents for debugging, cosnidering that is streamlit
+            #print("DOCX FUNTION: "+"\n".join(parts).strip(), file=sys.stdout)
+            return "\n".join(parts).strip()
 
-# Initialize debug log ──────────────────────────────────────────────────────
-if "_debug_log" not in st.session_state:
-    st.session_state._debug_log = st.empty()
+        except ModuleNotFoundError:
+            pass  # fall through to docx2txt
 
-def log(msg: str):
-    st.session_state._debug_text = st.session_state.get("_debug_text", "") + msg
-    st.session_state._debug_log.text("📝 Debug log\n\n" + st.session_state._debug_text)
+        # Option B – “good enough” full-text with docx2txt
+        try:
+            return docx2txt.process(io.BytesIO(raw)).strip()
+        except ModuleNotFoundError as exc:
+            msg = (f"{name}: cannot read - neither `python-docx` nor `docx2txt` available")
+            st.session_state._debug_log.write(f"❌ {msg}\n")
+            raise ValueError(msg) from exc
 
+
+    # 3. .xlsx / .xls (optional) ----------------------------------------------
+    if suffix in {".xlsx", ".xls"}:
+        try:
+            df = pd.read_excel(io.BytesIO(raw), sheet_name=None)
+            return "\n\n".join(df[s].to_csv(index=False) for s in df)
+        except ModuleNotFoundError as exc:
+            raise ValueError("`pandas` and `openpyxl` are required for Excel.") from exc
+
+
+    # 4️⃣ Fallback --------------------------------------------------------------
+    msg = f"{name}: unsupported file type ({suffix or 'no suffix'})"
+    st.session_state._debug_log.write(f"❌ {msg}\n")
+    raise ValueError(msg)
+
+
+
+
+
+
+
+
+################################################################################
 # Run button pressed ---------------------------------------------------------
+################################################################################
 if run_btn:
     if not uploaded_files:
         st.warning("Please choose at least one file first ⬆")
@@ -164,64 +332,133 @@ if run_btn:
     out_dir = work_dir / "anonymized"
     out_dir.mkdir(exist_ok=True)
 
-    eng = analyzer_engine(model_pkg, model_name, "", "")
+    # Starting analyzer engine
+    analyzer_load_state = st.info("Starting Presidio analyzer...")
+    analyzer = analyzer_engine(*analyzer_params)
+    analyzer_load_state.empty()
+    
+    # Number of files
     total = len(uploaded_files)
     prog = st.progress(0.0, text="Starting…")
 
+
     for idx, uf in enumerate(uploaded_files, start=1):
-        log(f"▶ {uf.name} → reading…\n")
-        txt = file_to_text(uf)
-        if txt is None:
+        log(f"▶ {uf.name} ({uf.size/1e6:.1f} MB) → reading…\n")
+        
+        # File to text
+        st_text = file_to_text(uf)
+        
+        if st_text is None:
             continue  # failure already logged
 
-        # ---------- ANALYZE ----------
-        analyze_kwargs = dict(
-            text=txt,
-            language="en",
-            score_threshold=threshold,
-            return_decision_process=False,
-        )
-        if st_entities:  # only include key if we have a real iterable
-            analyze_kwargs["entities"] = st_entities
 
-        results = analyze(model_pkg, model_name, "", "", **analyze_kwargs)
+        # THIS MAY NOT WORK AS EXPECTED IN THE BATCH MODE
+        # Choose entities
+        st_entities_expander = st.sidebar.expander("Choose entities to look for")
+        st_entities = st_entities_expander.multiselect(
+            label="Which entities to look for?",
+            options=get_supported_entities(*analyzer_params),
+            default=list(get_supported_entities(*analyzer_params)),
+            help="Limit the list of PII entities detected. "
+            "This list is dynamic and based on the NER model and registered recognizers. "
+            "More information can be found here: https://microsoft.github.io/presidio/analyzer/adding_recognizers/",
+        )
+
+        # ---------- ANALYZE ----------
+        st_analyze_results = analyze(
+            *analyzer_params,
+            text=st_text,
+            entities=st_entities,
+            language="en",
+            score_threshold=st_threshold,
+            return_decision_process=False,
+            allow_list=st_allow_list,
+            deny_list=st_deny_list,
+        )
 
         # ---------- ANONYMIZE ----------
-        anon_kwargs = dict(
-            text=txt,
-            operator=op,
-            analyze_results=results,
-            mask_char=mask_char,
-            number_of_chars=mask_len,
-            encrypt_key=enc_key,
-            replace_text=replace_tok,
-        )
-        # strip None entries (anonymize() doesn’t accept them)
-        anon_kwargs = {k: v for k, v in anon_kwargs.items() if v is not None}
+        if st_operator not in ("highlight", "synthesize"):
+            st_anonymize_results = anonymize(
+                text=st_text,
+                operator=st_operator,
+                mask_char=st_mask_char,
+                number_of_chars=st_number_of_chars,
+                encrypt_key=st_encrypt_key,
+                analyze_results=st_analyze_results,
+            )
 
-        try:
-            if op == "synthesize":
-                de_text = create_fake_data(txt, results, openai_params)
-            else:
-                de_text = anonymize(**anon_kwargs).text
-        except TypeError as te:
-            # Fallback for older presidio‑anonymizer signatures (no replace_text)
-            if "replace_text" in str(te):
-                anon_kwargs.pop("replace_text", None)
-                de_text = anonymize(**anon_kwargs).text
-            else:
-                raise
 
         # write output
         out_path = out_dir / uf.name
-        out_path.write_text(de_text, encoding="utf-8")
+        # Rewrite in the format of the original file
+        if uf.name.endswith(".csv"):
+            # Convert to DataFrame
+            df = pd.DataFrame(st_anonymize_results.text)
+            # Save as CSV
+            out_path = out_path.with_suffix(".csv")
+            df.to_csv(out_path, index=False)
+        elif uf.name.endswith(".tsv"):
+            # Convert to DataFrame
+            df = pd.DataFrame(st_anonymize_results.text)
+            # Save as TSV
+            out_path = out_path.with_suffix(".tsv")
+            df.to_csv(out_path, sep="\t", index=False)
+        elif uf.name.endswith(".txt"):
+            # Save as TXT
+            out_path = out_path.with_suffix(".txt")
+            with open(out_path, "w", encoding="utf-8") as f:
+                f.write(st_anonymize_results.text)
+        elif uf.name.endswith(".log"):
+            # Save as LOG
+            out_path = out_path.with_suffix(".log")
+            with open(out_path, "w", encoding="utf-8") as f:
+                f.write(st_anonymize_results.text)
+        elif uf.name.endswith(".jsonl"):
+            # Convert to DataFrame
+            df = pd.DataFrame(st_anonymize_results.text)
+            # Save as JSONL
+            out_path = out_path.with_suffix(".jsonl")
+            df.to_json(out_path, orient="records", lines=True)
+        elif uf.name.endswith(".xlsx"):
+            # Convert to DataFrame
+            df = pd.DataFrame(st_anonymize_results.text)
+            # Save as Excel
+            out_path = out_path.with_suffix(".xlsx")
+            df.to_excel(out_path, index=False)
+        elif uf.name.endswith(".xls"):
+            # Convert to DataFrame
+            df = pd.DataFrame(st_anonymize_results.text)
+            # Save as Excel
+            out_path = out_path.with_suffix(".xls")
+            df.to_excel(out_path, index=False)
+        elif uf.name.endswith(".doc"):
+            # Create a new Document
+            doc = _docx.Document()
+            # Add the anonymized text to the document
+            doc.add_paragraph(st_anonymize_results.text)
+            # Save the document
+            out_path = out_path.with_suffix(".doc")
+            doc.save(out_path)
+        elif uf.name.endswith(".docx"):
+            # Create a new Document
+            doc = _docx.Document()
+            # Add the anonymized text to the document
+            doc.add_paragraph(st_anonymize_results.text)
+            # Save the document
+            out_path = out_path.with_suffix(".docx")
+            doc.save(out_path)
         log(f"✔ {uf.name} – done\n")
+        
         prog.progress(idx / total, text=f"{idx}/{total} done")
 
-    # Bundle ZIP -------------------------------------------------------------
+
+    #######################################################################
+    # Bundle all anonymized files into an in-memory ZIP for user download
+    #######################################################################
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for p in out_dir.iterdir():
+            log(f"📦 Adding to ZIP: {p.name}\n")
             zf.write(p, arcname=p.name)
     buf.seek(0)
 
@@ -236,3 +473,8 @@ if run_btn:
 
     # remember temp dir → will be cleaned on session end
     st.session_state.setdefault("_tmp_dirs", []).append(work_dir)
+    import atexit
+    atexit.register(lambda: shutil.rmtree(work_dir, ignore_errors=True))
+    
+    with st.expander("📝 Debug log", expanded=False):
+        st.text(st.session_state.get("_debug_text", ""))

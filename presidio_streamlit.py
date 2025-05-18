@@ -100,7 +100,9 @@ analyzer_params = (st_model_package, st_model, st_ta_key, st_ta_endpoint)
 logger.debug(f"analyzer_params: {analyzer_params}")
 
 
-
+#########################
+# Settings on the sidebar
+#########################
 st_operator = st.sidebar.selectbox(
     "De-identification approach",
     ["redact", "replace", "synthesize", "highlight", "mask", "hash", "encrypt"],
@@ -125,6 +127,9 @@ open_ai_params = None
 logger.debug(f"st_operator: {st_operator}")
 
 
+########################################################################################
+# This part will not be used in the demo, but is here for future use for local LLMs
+########################################################################################
 def set_up_openai_synthesis():
     """Set up the OpenAI API key and model for text synthesis."""
 
@@ -231,8 +236,17 @@ with st_deny_allow_expander:
     st.caption(
         "Denylists contain words that are considered PII, but are not detected as such."
     )
-# Main panel
 
+
+
+
+
+
+
+
+###############################
+# Main panel
+###############################
 with st.expander("About this demo", expanded=False):
     st.info(
         """Presidio is an open source customizable framework for PII detection and de-identification.
@@ -248,12 +262,7 @@ with st.expander("About this demo", expanded=False):
     Use this demo to:
     - Experiment with different off-the-shelf models and NLP packages.
     - Explore the different de-identification options, including redaction, masking, encryption and more.
-    - Generate synthetic text with Microsoft Presidio and OpenAI.
     - Configure allow and deny lists.
-    
-    This demo website shows some of Presidio's capabilities.
-    [Visit our website](https://microsoft.github.io/presidio) for more info,
-    samples and deployment options.    
     """
     )
 
@@ -267,6 +276,7 @@ analyzer_load_state = st.info("Starting Presidio analyzer...")
 
 analyzer_load_state.empty()
 
+
 # Read default text
 with open("demo_text.txt") as f:
     demo_text = f.readlines()
@@ -274,6 +284,8 @@ with open("demo_text.txt") as f:
 # Create two columns for before and after
 col1, col2 = st.columns(2)
 
+
+##### COLUMN BEFORE #####
 # Before:
 col1.subheader("Input")
 st_text = col1.text_area(
@@ -312,6 +324,9 @@ try:
     if st_operator not in ("highlight", "synthesize"):
         with col2:
             st.subheader(f"Output")
+            ###########################
+            # De-identification process
+            ###########################
             st_anonymize_results = anonymize(
                 text=st_text,
                 operator=st_operator,
@@ -344,6 +359,10 @@ try:
         if not st_return_decision_process
         else "Findings with decision factors"
     )
+    # In the following, we create a dataframe from the results of the analysis.
+    # We use the to_dict() method of the RecognizerResult class to convert the results
+    # to a dictionary, and then we create a dataframe from the list of dictionaries.
+    # We also add the text of the entity to the dataframe.
     if st_analyze_results:
         df = pd.DataFrame.from_records([r.to_dict() for r in st_analyze_results])
         df["text"] = [st_text[res.start : res.end] for res in st_analyze_results]
