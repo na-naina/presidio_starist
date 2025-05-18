@@ -1,0 +1,29 @@
+# Ignore Python virtual environments
+presidio-venv/
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+presidio-venv/
+
+# Poetry
+poetry.lock
+
+# PyInstaller
+*.spec
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints
+
+# VSCode settings
+.vscode/
+
+# OS-specific
+.DS_Store
+Thumbs.db
+
+# Streamlit cache
+.streamlit/

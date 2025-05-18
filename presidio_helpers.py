@@ -255,3 +255,44 @@ def create_ad_hoc_regex_recognizer(
         supported_entity=entity_type, patterns=[pattern], context=context
     )
     return regex_recognizer
+
+
+# --- NEW ----------------------------------------------
+from pathlib import Path
+import streamlit as st
+from presidio_anonymizer import AnonymizerEngine, OperatorConfig
+
+def batch_anonymize(
+    folder: Path,
+    analyzer_engine,
+    language: str = "en",
+    replace_token: str = "<ANON>"
+):
+    """
+    Walk over `folder`, anonymize every regular file with text content and
+    save an `<original>_anon<suffix>` next to it.
+    """
+    anonymizer = AnonymizerEngine()
+    op_config = {"DEFAULT": OperatorConfig("replace", {"new_value": replace_token})}
+
+    file_list = [p for p in folder.iterdir() if p.is_file()]
+    if not file_list:
+        st.warning(f"No files found in {folder}")
+        return
+
+    progress = st.progress(0.0, "Starting batch…")
+    for idx, path in enumerate(file_list, 1):
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore")
+            results = analyzer_engine.analyze(text=text, language=language)
+            anon = anonymizer.anonymize(text=text, analyzer_results=results,
+                                        operators=op_config).text
+            out_path = path.with_stem(path.stem + "_anon")
+            out_path.write_text(anon, encoding="utf-8")
+            st.write(f"✅ `{path.name}` → `{out_path.name}`")
+        except Exception as e:
+            st.error(f"❌ `{path.name}` skipped – {e}")
+        finally:
+            progress.progress(idx / len(file_list))
+    st.success("Batch anonymization finished.")
+# ------------------------------------------------------

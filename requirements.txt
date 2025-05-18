@@ -9,4 +9,5 @@ st-annotated-text
 torch
 flair
 openai
-azure-ai-textanalytics
+watchdog
+#azure-ai-textanalytics
