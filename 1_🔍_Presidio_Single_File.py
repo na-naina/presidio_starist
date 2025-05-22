@@ -259,7 +259,7 @@ st_return_decision_process = st.sidebar.checkbox(
 # Allow and deny lists
 st_deny_allow_expander = st.sidebar.expander(
     "Allowlists and denylists",
-    expanded=False,
+    expanded=True,
 )
 
 with st_deny_allow_expander:
