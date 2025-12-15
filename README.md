@@ -9,3 +9,10 @@ license: mit
 ---
 
 Check out the configuration reference at https://huggingface.co/docs/hub/spaces-config-reference
+
+
+
+
+To run:
+- source presidio-venv/bin/activate     
+- streamlit run 1_🔍_Presidio_Single_File.py
