@@ -214,7 +214,7 @@ uploader_key = f"batch_files_{st.session_state.file_key_version}"
 
 uploaded_files = st.file_uploader(
     "Select one or more files",
-    type=["txt", "csv", "tsv", "docx", "xlsx", "xls", "log", "jsonl"],
+    type=["txt", "csv", "tsv", "docx", "xlsx", "xls", "xlsm", "log", "jsonl"],
     accept_multiple_files=True,
     key=uploader_key,
 )
@@ -327,8 +327,8 @@ def file_to_text(upload, encoding: str | None = None) -> str:
                 raise ValueError(f"{name}: could not process DOCX") from exc
     
     
-    # 2. .xlsx / .xls --------------------------------------------------
-    elif suffix in {".xlsx", ".xls"}:
+    # 2. .xlsx / .xls / .xlsm --------------------------------------------------
+    elif suffix in {".xlsx", ".xls", ".xlsm"}:
         try:
             sheets = pd.read_excel(io.BytesIO(raw), sheet_name=None, engine=None)
             if not sheets:
@@ -457,7 +457,7 @@ if run_btn:
                 out_path = out_path.with_suffix(".jsonl")
                 df.to_json(out_path, orient="records", lines=True)
 
-            elif uf.name.endswith((".xlsx", ".xls")):
+            elif uf.name.endswith((".xlsx", ".xls", ".xlsm")):
                 log("• first 120 chars BEFORE rebuild:\n"
                     f"{clean_text[:120]!r}\n\n")
                 try:

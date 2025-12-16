@@ -244,7 +244,7 @@ uploader_key = f"batch_files_{st.session_state.file_key_version}"
 
 uploaded_files = st.file_uploader(
     "Select one or more files",
-    type=["txt", "csv", "tsv", "docx", "xlsx", "xls", "log", "jsonl"],
+    type=["txt", "csv", "tsv", "docx", "xlsx", "xls", "xlsm", "log", "jsonl"],
     accept_multiple_files=True,
     key=uploader_key,
 )
@@ -382,8 +382,8 @@ def file_to_text(upload, encoding: str | None = None) -> str:
             log(f"❌ {msg}\n")
             raise ValueError(msg) from exc
 
-    # 2. .xlsx / .xls --------------------------------------------------
-    if suffix in {".xlsx", ".xls"}:
+    # 2. .xlsx / .xls / .xlsm --------------------------------------------------
+    if suffix in {".xlsx", ".xls", ".xlsm"}:
         try:
             # read all sheets into a dict[ sheet-name → DataFrame ]
             sheets = pd.read_excel(io.BytesIO(raw), sheet_name=None, engine=None)
@@ -525,7 +525,7 @@ if run_btn:
             # Save as JSONL
             out_path = out_path.with_suffix(".jsonl")
             df.to_json(out_path, orient="records", lines=True)
-        elif uf.name.endswith((".xlsx", ".xls")):
+        elif uf.name.endswith((".xlsx", ".xls", ".xlsm")):
             # ——— DEBUG TRACE ————————————————————————————————
             log("• first 120 chars BEFORE rebuild:\n"
                 f"{clean_text[:120]!r}\n\n")

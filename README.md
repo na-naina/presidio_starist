@@ -10,8 +10,12 @@ license: mit
 
 Check out the configuration reference at https://huggingface.co/docs/hub/spaces-config-reference
 
+## Supported File Formats
 
-
+**Batch Anonymization** supports the following file formats:
+- Text files: `.txt`, `.log`, `.csv`, `.tsv`, `.jsonl`
+- Documents: `.docx`, `.doc`
+- Excel files: `.xlsx`, `.xls`, `.xlsm` (including macro-enabled)
 
 To run:
 - source presidio-venv/bin/activate     
