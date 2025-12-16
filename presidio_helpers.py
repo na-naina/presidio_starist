@@ -286,6 +286,27 @@ def anonymize_with_entity_tracking(
     Example mapping: {"john smith": "PERSON_1", "mary johnson": "PERSON_2"}
     """
     
+    def normalize_entity(entity_text: str) -> tuple:
+        """
+        Normalize entity text for consistent matching.
+        Returns: (normalized_key, possessive_suffix)
+        """
+        text_lower = entity_text.lower().strip()
+        possessive = ""
+        
+        # Check for possessive markers and extract them
+        if text_lower.endswith("'s"):
+            possessive = "'s"
+            text_lower = text_lower[:-2]
+        elif text_lower.endswith("'s"):
+            possessive = "'s"
+            text_lower = text_lower[:-2]
+        
+        # Remove trailing punctuation from base
+        text_lower = text_lower.rstrip(".,;:!?")
+        
+        return text_lower, possessive
+    
     # Track unique entities
     entity_mapping = {}  # {normalized_text: entity_id}
     entity_counters = {}  # {entity_type: counter}
@@ -293,7 +314,7 @@ def anonymize_with_entity_tracking(
     # First pass: build mapping for all entities
     for result in analyze_results:
         entity_text = text[result.start:result.end]
-        normalized_key = entity_text.lower().strip()
+        normalized_key, _ = normalize_entity(entity_text)
         entity_type = result.entity_type
         
         if normalized_key not in entity_mapping:
@@ -303,11 +324,25 @@ def anonymize_with_entity_tracking(
     
     # Second pass: replace text with entity IDs (process in reverse to maintain indices)
     result_text = text
-    for result in sorted(analyze_results, key=lambda r: r.start, reverse=True):
+    sorted_results = sorted(analyze_results, key=lambda r: r.start, reverse=True)
+    
+    for i, result in enumerate(sorted_results):
         entity_text = text[result.start:result.end]
-        normalized_key = entity_text.lower().strip()
+        normalized_key, possessive = normalize_entity(entity_text)
         entity_id = entity_mapping[normalized_key]
-        result_text = result_text[:result.start] + entity_id + result_text[result.end:]
+        
+        # Preserve possessive form: "Julian's" → "PERSON_1's"
+        replacement = entity_id + possessive
+        
+        # Check if the next entity (in original order) is immediately adjacent
+        # If so, add a space to prevent fusion like "AU_ABN_1PERSON_2"
+        if i > 0:  # Check previous entity in the sorted list (next in document order)
+            prev_result = sorted_results[i - 1]
+            # If this entity ends exactly where the next begins, add space
+            if result.end == prev_result.start:
+                replacement = replacement + " "
+        
+        result_text = result_text[:result.start] + replacement + result_text[result.end:]
     
     return result_text, entity_mapping
 

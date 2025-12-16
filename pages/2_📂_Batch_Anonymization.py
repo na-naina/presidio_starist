@@ -133,7 +133,7 @@ st_threshold = st.sidebar.slider(
 # --- Entity Tracking Toggle ---
 st_track_entity_ids = st.sidebar.checkbox(
     "Track entity IDs",
-    value=False,
+    value=True,
     help="""
     When enabled, each unique entity (person, organization, etc.) is assigned a unique ID
     (e.g., PERSON_1, PERSON_2) instead of a generic placeholder (e.g., <PERSON>).
