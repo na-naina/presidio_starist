@@ -18,8 +18,10 @@ poetry install
 4. Start the app:
 
 ```sh
-poetry run streamlit run presidio_streamlit.py
+poetry run streamlit run 1_📂_Batch_Anonymization.py
 ```
+
+> Note: The main entry point is now `1_📂_Batch_Anonymization.py` which provides batch file processing capabilities. The Single File page is available in `pages/1_🔍_Presidio_Single_File.py`.
 
 5. Consider adding an `.env` file with the following environment variables, for further customizability:
 ```sh

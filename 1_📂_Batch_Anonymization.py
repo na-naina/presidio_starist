@@ -32,6 +32,40 @@ from presidio_helpers import (
 )
 
 # ---------------------------------------------------------------------------
+# LOGOS & BANNER
+# ---------------------------------------------------------------------------
+import base64
+from PIL import Image
+
+# Load and encode image in base64
+logo_path = Path("images/logos.png")
+if logo_path.exists():
+    with open(logo_path, "rb") as f:
+        encoded = base64.b64encode(f.read()).decode()
+
+    st.markdown(
+        f"""
+        <div style="display: flex; justify-content: center; align-items: center; padding: 1rem 0;">
+            <img src="data:image/png;base64,{encoded}" style="width:600px; max-width:100%; height:auto;">
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+else:
+    st.image("images/logos.png", use_container_width=False, width=600)
+
+st.markdown(
+    """
+    <div style="padding:0.6rem 0 1rem 0; text-align:center; font-size:1.1rem;">
+        <b>This application is for the
+        <span style="color:#4169E1;">STAR Project 25/26</span>:</b>
+        <p>STARIST: Stalking Threat AI Recognition (and) Identification Support Tool</p>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+# ---------------------------------------------------------------------------
 # CONSTANTS
 # ---------------------------------------------------------------------------
 TEXT_SUFFIXES = {".txt", ".csv", ".tsv", ".log", ".jsonl"}
@@ -47,15 +81,17 @@ allow_other_models = os.getenv("ALLOW_OTHER_MODELS", False)
 # ---------------------------------------------------------------------------
 # SIDEBAR UI
 # ---------------------------------------------------------------------------
-st.sidebar.header(
-    """Settings
-Batch Anonymization - Presidio.
-"""
-)
+st.sidebar.title("⚙️ Batch Anonymization Settings")
+st.sidebar.markdown("---")
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SECTION 1: NER MODEL CONFIGURATION
+# ═══════════════════════════════════════════════════════════════════════════
+st.sidebar.subheader("🔍 Detection Model")
 
 model_help_text = """
-Select which Named Entity Recognition (NER) model to use for PII detection, in parallel to rule-based recognizers.
-Presidio supports multiple NER packages off-the-shelf, such as spaCy, Huggingface, Stanza and Flair.
+Select the Named Entity Recognition (NER) model for PII detection.
+Presidio uses these models alongside rule-based recognizers for comprehensive detection.
 """
 
 st_ta_key = st_ta_endpoint = ""
@@ -71,91 +107,114 @@ model_list = [
 if not allow_other_models:
     model_list.pop()
 
-# Select model
-st_model = st.sidebar.selectbox("NER model package", model_list, index=1, help=model_help_text)
+st_model = st.sidebar.selectbox(
+    "Model",
+    model_list,
+    index=1,
+    help=model_help_text
+)
 
-# Extract model package.
+# Extract model package
 st_model_package = st_model.split("/")[0]
-
-# Remove package prefix (if needed)
 st_model = st_model if st_model_package.lower() not in ("spacy", "stanza", "huggingface") else "/".join(st_model.split("/")[1:])
 
-
 if st_model == "Other":
-    st_model_package = st.sidebar.selectbox("NER model OSS package", ["spaCy", "stanza", "Flair", "HuggingFace"])
-    st_model = st.sidebar.text_input("NER model name", value="")
+    st_model_package = st.sidebar.selectbox("Package", ["spaCy", "stanza", "Flair", "HuggingFace"])
+    st_model = st.sidebar.text_input("Model name", value="")
 
-
-st.sidebar.warning("Note: Models might take some time to download.")
+st.sidebar.caption("⏳ Note: Models may take time to download on first use.")
 
 analyzer_params = (st_model_package, st_model, st_ta_key, st_ta_endpoint)
 logger.debug(f"analyzer_params: {analyzer_params}")
 
+st.sidebar.markdown("---")
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SECTION 2: ANONYMIZATION METHOD
+# ═══════════════════════════════════════════════════════════════════════════
+st.sidebar.subheader("🛡️ Anonymization Method")
+
 st_operator = st.sidebar.selectbox(
-    "De-identification approach",
-    ["redact", "replace", "synthesize", "highlight", "mask", "hash", "encrypt"],
-    index=1,
+    "Approach",
+    ["replace", "redact", "mask", "hash", "encrypt"],
+    index=0,
     help="""
-    Select which manipulation to the text is requested after PII has been identified.\n
-    - Redact: Completely remove the PII text\n
-    - Replace: Replace the PII text with a constant, e.g. <PERSON>\n
-    - Synthesize: Replace with fake values (requires an OpenAI key)\n
-    - Highlight: Shows the original text with PII highlighted in colors\n
-    - Mask: Replaces a requested number of characters with an asterisk (or other mask character)\n
-    - Hash: Replaces with the hash of the PII string\n
-    - Encrypt: Replaces with an AES encryption of the PII string, allowing the process to be reversed
-         """,
+    **Replace**: Replace PII with entity IDs (e.g., PERSON_1, PERSON_2)
+    **Redact**: Completely remove PII text
+    **Mask**: Replace characters with symbols (e.g., ****)
+    **Hash**: Replace with cryptographic hash
+    **Encrypt**: Replace with AES encryption (reversible)
+    """,
 )
 logger.debug(f"st_operator: {st_operator}")
 
-st_mask_char        = "*"
-st_number_of_chars  = 15
-st_encrypt_key      = "WmZq4t7w!z%C&F)J"
+st_mask_char = "*"
+st_number_of_chars = 15
+st_encrypt_key = "WmZq4t7w!z%C&F)J"
 
 if st_operator == "mask":
-    st_number_of_chars = st.sidebar.number_input(
-        "number of chars", value=st_number_of_chars, min_value=0, max_value=100
-    )
-    st_mask_char = st.sidebar.text_input(
-        "Mask character", value=st_mask_char, max_chars=1
-    )
+    col1, col2 = st.sidebar.columns(2)
+    with col1:
+        st_mask_char = st.text_input("Character", value=st_mask_char, max_chars=1)
+    with col2:
+        st_number_of_chars = st.number_input("# chars", value=st_number_of_chars, min_value=0, max_value=100)
 elif st_operator == "encrypt":
-    st_encrypt_key = st.sidebar.text_input("AES key", value=st_encrypt_key)
+    st_encrypt_key = st.sidebar.text_input("AES key (16 chars)", value=st_encrypt_key, max_chars=16)
 
-st_threshold = st.sidebar.slider(
-    label="Acceptance threshold",
-    min_value=0.0,
-    max_value=1.0,
-    value=0.35,
-    help="Define the threshold for accepting a detection as PII. See more here: ",
-)
-
-# --- Entity Tracking Toggle ---
 st_track_entity_ids = st.sidebar.checkbox(
     "Track entity IDs",
     value=True,
     help="""
-    When enabled, each unique entity (person, organization, etc.) is assigned a unique ID
-    (e.g., PERSON_1, PERSON_2) instead of a generic placeholder (e.g., <PERSON>).
-    The same person mentioned multiple times will have the same ID.
+    Assign unique IDs to each entity (PERSON_1, PERSON_2, etc.).
+    The same person mentioned multiple times receives the same ID.
+    Dates are ordered chronologically. Generic terms like "victim" or "caller" are excluded.
     """,
 )
 
+st.sidebar.markdown("---")
 
+# ═══════════════════════════════════════════════════════════════════════════
+# SECTION 3: DETECTION SETTINGS
+# ═══════════════════════════════════════════════════════════════════════════
+st.sidebar.subheader("🎯 Detection Settings")
 
+st_threshold = st.sidebar.slider(
+    "Confidence threshold",
+    min_value=0.0,
+    max_value=1.0,
+    value=0.35,
+    help="Minimum confidence score (0-1) to accept a PII detection. Lower values = more detections but potentially more false positives.",
+)
 
-# ── Sidebar: Allow / Deny lists ───
-with st.sidebar.expander("Allowlists & Denylists", expanded=True):
+with st.sidebar.expander("🔎 Entity Types", expanded=False):
+    available_ents = get_supported_entities(*analyzer_params)
+    st_entities = st.multiselect(
+        "Select entity types to detect",
+        options=available_ents,
+        default=list(available_ents),
+        key="batch_entities",
+        help="Choose which types of PII to detect (names, addresses, dates, etc.)"
+    )
+    st.caption(f"✓ {len(st_entities)} entity types selected")
+
+st.sidebar.markdown("---")
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SECTION 4: CUSTOM FILTERS
+# ═══════════════════════════════════════════════════════════════════════════
+st.sidebar.subheader("🔧 Custom Filters")
+
+with st.sidebar.expander("Allowlist & Denylist", expanded=True):
     allow_raw = st_tags(
         label="Allowlist - never treat these as PII",
         text="Type word and press ↩︎",
-        key="batch_allow_tags"          # ← UNIQUE KEY  (important!)
-    ) or []                       # ← always a list, even if None
+        key="batch_allow_tags"
+    ) or []
 
     deny_raw = st_tags(
         label="Denylist - always treat these as PII",
         text="Type word and press ↩︎",
-        key="batch_deny_tags"           # ← UNIQUE KEY
+        key="batch_deny_tags"
     ) or []
     
     # These lines force the widgets to stay visible
@@ -164,23 +223,12 @@ with st.sidebar.expander("Allowlists & Denylists", expanded=True):
 
     # Optional visual feedback
     if allow_raw:
-        st.caption(f"Current allowlist: {', '.join(allow_raw)}")
+        st.caption(f"✓ Allowlist: {', '.join(allow_raw)}")
     if deny_raw:
-        st.caption(f"Current denylist: {', '.join(deny_raw)}")
+        st.caption(f"✓ Denylist: {', '.join(deny_raw)}")
         
     allow_list = list(w.strip() for w in allow_raw if w.strip())
-    deny_list  = list(w.strip() for w in deny_raw  if w.strip())
-
-# --- Let the user choose the entity list once ---
-with st.sidebar.expander("Choose entities to look for", expanded=False):
-    # build the choices lazily (after model-selection but before run)
-    available_ents = get_supported_entities(*analyzer_params)
-    st_entities = st.multiselect(
-        "Which entities to look for?",
-        options=available_ents,
-        default=list(available_ents),
-        key="batch_entities"        # explicit key is good practice
-    )
+    deny_list = list(w.strip() for w in deny_raw if w.strip())
 
 
 
