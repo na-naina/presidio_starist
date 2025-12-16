@@ -286,6 +286,63 @@ def anonymize_with_entity_tracking(
     Example mapping: {"john smith": "PERSON_1", "mary johnson": "PERSON_2"}
     """
     
+    # Generic person descriptors that should NOT be anonymized
+    # Expanded for police reports and stalking case documentation
+    GENERIC_DESCRIPTORS = {
+        # Victims and complainants
+        'caller', 'victim', 'complainant', 'reporter', 'informant', 'survivor',
+        'target', 'subject',
+        
+        # Suspects and offenders
+        'suspect', 'perpetrator', 'offender', 'accused', 'defendant',
+        'stalker', 'harasser', 'abuser', 'assailant', 'aggressor',
+        'ex-partner', 'ex-boyfriend', 'ex-girlfriend', 'ex-spouse', 'ex-husband', 'ex-wife',
+        
+        # Law enforcement
+        'officer', 'detective', 'constable', 'sergeant', 'inspector', 'chief',
+        'deputy', 'trooper', 'investigator', 'dispatcher', 'agent',
+        
+        # Legal professionals
+        'lawyer', 'attorney', 'solicitor', 'barrister', 'counsel', 'prosecutor',
+        'judge', 'magistrate', 'plaintiff',
+        
+        # Support services and healthcare
+        'counselor', 'counsellor', 'therapist', 'advocate', 'caseworker',
+        'social worker', 'support worker', 'coordinator', 'advisor', 'adviser',
+        'doctor', 'nurse', 'clinician', 'practitioner', 'psychologist',
+        'psychiatrist', 'specialist',
+        
+        # Witnesses and bystanders
+        'witness', 'bystander', 'observer', 'neighbor', 'neighbour',
+        
+        # Relationships and family
+        'partner', 'boyfriend', 'girlfriend', 'spouse', 'husband', 'wife',
+        'friend', 'acquaintance', 'colleague', 'coworker',
+        'family member', 'relative', 'parent', 'mother', 'father',
+        'sibling', 'brother', 'sister', 'child', 'son', 'daughter',
+        'landlord', 'tenant', 'roommate',
+        
+        # Generic references
+        'individual', 'person', 'party', 'people', 'staff', 'member',
+        'employee', 'worker', 'client', 'patient', 'customer', 'user',
+        'resident', 'occupant', 'homeowner', 'resident',
+        
+        # Generic demographic terms
+        'man', 'woman', 'boy', 'girl', 'child', 'adult', 'youth',
+        'male', 'female', 'gentleman', 'lady',
+        
+        # Professional titles
+        'manager', 'supervisor', 'director', 'administrator', 'assistant',
+        'teacher', 'instructor', 'professor', 'principal',
+        
+        # Indefinite references
+        'someone', 'anyone', 'everyone', 'somebody', 'anybody', 'everybody',
+        'one', 'other', 'another',
+        
+        # Pronouns
+        'he', 'she', 'they', 'him', 'her', 'them', 'his', 'hers', 'theirs',
+    }
+    
     def normalize_entity(entity_text: str) -> tuple:
         """
         Normalize entity text for consistent matching.
@@ -310,12 +367,18 @@ def anonymize_with_entity_tracking(
     # Track unique entities
     entity_mapping = {}  # {normalized_text: entity_id}
     entity_counters = {}  # {entity_type: counter}
+    entities_to_skip = set()  # Generic descriptors to skip
     
     # First pass: build mapping for all entities
     for result in analyze_results:
         entity_text = text[result.start:result.end]
         normalized_key, _ = normalize_entity(entity_text)
         entity_type = result.entity_type
+        
+        # Skip generic descriptors
+        if normalized_key in GENERIC_DESCRIPTORS:
+            entities_to_skip.add((result.start, result.end))
+            continue
         
         if normalized_key not in entity_mapping:
             counter = entity_counters.get(entity_type, 0) + 1
@@ -327,6 +390,10 @@ def anonymize_with_entity_tracking(
     sorted_results = sorted(analyze_results, key=lambda r: r.start, reverse=True)
     
     for i, result in enumerate(sorted_results):
+        # Skip generic descriptors
+        if (result.start, result.end) in entities_to_skip:
+            continue
+            
         entity_text = text[result.start:result.end]
         normalized_key, possessive = normalize_entity(entity_text)
         entity_id = entity_mapping[normalized_key]
