@@ -343,6 +343,52 @@ def anonymize_with_entity_tracking(
         'he', 'she', 'they', 'him', 'her', 'them', 'his', 'hers', 'theirs',
     }
     
+    def parse_date(date_str: str):
+        """
+        Parse a date string to a sortable datetime object.
+        Returns None if parsing fails.
+        """
+        import re
+        from datetime import datetime
+        
+        date_str = date_str.strip()
+        
+        # Common date formats to try
+        formats = [
+            # ISO formats
+            '%Y-%m-%d',
+            '%Y/%m/%d',
+            '%Y-%m-%dT%H:%M:%S',
+            '%Y-%m-%d %H:%M:%S',
+            # European formats (day first)
+            '%d/%m/%Y',
+            '%d-%m-%Y',
+            '%d.%m.%Y',
+            '%d/%m/%y',
+            '%d-%m-%y',
+            '%d.%m.%y',
+            # US formats (month first)
+            '%m/%d/%Y',
+            '%m-%d-%Y',
+            '%m/%d/%y',
+            # Written formats
+            '%d %B %Y',
+            '%d %b %Y',
+            '%B %d, %Y',
+            '%b %d, %Y',
+            '%B %d %Y',
+            '%b %d %Y',
+        ]
+        
+        for fmt in formats:
+            try:
+                return datetime.strptime(date_str, fmt)
+            except ValueError:
+                continue
+        
+        # If no format matches, return None
+        return None
+    
     def normalize_entity(entity_text: str) -> tuple:
         """
         Normalize entity text for consistent matching.
@@ -369,7 +415,10 @@ def anonymize_with_entity_tracking(
     entity_counters = {}  # {entity_type: counter}
     entities_to_skip = set()  # Generic descriptors to skip
     
-    # First pass: build mapping for all entities
+    # Collect DATE_TIME entities for chronological sorting
+    date_entities = []  # [(normalized_key, parsed_date, original_text)]
+    
+    # First pass: collect all entities and identify dates
     for result in analyze_results:
         entity_text = text[result.start:result.end]
         normalized_key, _ = normalize_entity(entity_text)
@@ -378,6 +427,36 @@ def anonymize_with_entity_tracking(
         # Skip generic descriptors
         if normalized_key in GENERIC_DESCRIPTORS:
             entities_to_skip.add((result.start, result.end))
+            continue
+        
+        # Collect DATE_TIME entities for sorting
+        if entity_type == "DATE_TIME" and normalized_key not in entity_mapping:
+            parsed_date = parse_date(entity_text)
+            date_entities.append((normalized_key, parsed_date, entity_text))
+    
+    # Pre-assign DATE_TIME IDs in chronological order
+    # Sort by parsed date (None values go to the end)
+    date_entities_sorted = sorted(
+        date_entities,
+        key=lambda x: (x[1] is None, x[1] if x[1] else None)
+    )
+    
+    for normalized_key, _, _ in date_entities_sorted:
+        if normalized_key not in entity_mapping:
+            counter = entity_counters.get("DATE_TIME", 0) + 1
+            entity_counters["DATE_TIME"] = counter
+            entity_mapping[normalized_key] = f"DATE_TIME_{counter}"
+    
+    # Second pass: build mapping for remaining (non-date) entities
+    for result in analyze_results:
+        entity_text = text[result.start:result.end]
+        normalized_key, _ = normalize_entity(entity_text)
+        entity_type = result.entity_type
+        
+        # Skip generic descriptors and already-mapped dates
+        if normalized_key in GENERIC_DESCRIPTORS or normalized_key in entity_mapping:
+            if normalized_key in GENERIC_DESCRIPTORS:
+                entities_to_skip.add((result.start, result.end))
             continue
         
         if normalized_key not in entity_mapping:
