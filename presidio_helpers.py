@@ -257,10 +257,60 @@ def create_ad_hoc_regex_recognizer(
     return regex_recognizer
 
 
-# --- NEW ----------------------------------------------
+# --- NEW: ENTITY TRACKING FUNCTIONS -------------------------------------------
 from pathlib import Path
 import streamlit as st
 from presidio_anonymizer import AnonymizerEngine, OperatorConfig
+from typing import Tuple, Dict
+
+def anonymize_with_entity_tracking(
+    text: str,
+    operator: str,
+    analyze_results: List[RecognizerResult],
+    mask_char: Optional[str] = None,
+    number_of_chars: Optional[str] = None,
+    encrypt_key: Optional[str] = None,
+) -> Tuple[str, Dict[str, str]]:
+    """
+    Anonymize text while tracking entity IDs.
+    Same person mentioned multiple times gets the same ID.
+    
+    :param text: Original text
+    :param operator: Anonymization operator (redact, replace, mask, hash, encrypt)
+    :param analyze_results: List of RecognizerResult from analyzer
+    :param mask_char: Character for masking (if operator='mask')
+    :param number_of_chars: Number of chars to mask (if operator='mask')
+    :param encrypt_key: Encryption key (if operator='encrypt')
+    
+    :return: Tuple of (anonymized_text, entity_id_mapping)
+    Example mapping: {"john smith": "PERSON_1", "mary johnson": "PERSON_2"}
+    """
+    
+    # Track unique entities
+    entity_mapping = {}  # {normalized_text: entity_id}
+    entity_counters = {}  # {entity_type: counter}
+    
+    # First pass: build mapping for all entities
+    for result in analyze_results:
+        entity_text = text[result.start:result.end]
+        normalized_key = entity_text.lower().strip()
+        entity_type = result.entity_type
+        
+        if normalized_key not in entity_mapping:
+            counter = entity_counters.get(entity_type, 0) + 1
+            entity_counters[entity_type] = counter
+            entity_mapping[normalized_key] = f"{entity_type}_{counter}"
+    
+    # Second pass: replace text with entity IDs (process in reverse to maintain indices)
+    result_text = text
+    for result in sorted(analyze_results, key=lambda r: r.start, reverse=True):
+        entity_text = text[result.start:result.end]
+        normalized_key = entity_text.lower().strip()
+        entity_id = entity_mapping[normalized_key]
+        result_text = result_text[:result.start] + entity_id + result_text[result.end:]
+    
+    return result_text, entity_mapping
+
 
 def batch_anonymize(
     folder: Path,
@@ -295,4 +345,4 @@ def batch_anonymize(
         finally:
             progress.progress(idx / len(file_list))
     st.success("Batch anonymization finished.")
-# ------------------------------------------------------
+# -------------------------------------------------------

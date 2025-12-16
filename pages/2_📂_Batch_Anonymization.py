@@ -27,6 +27,7 @@ from presidio_helpers import (
     get_supported_entities,
     analyze,
     anonymize,
+    anonymize_with_entity_tracking,
     analyzer_engine,
 )
 
@@ -129,6 +130,17 @@ st_threshold = st.sidebar.slider(
     help="Define the threshold for accepting a detection as PII. See more here: ",
 )
 
+# --- Entity Tracking Toggle ---
+st_track_entity_ids = st.sidebar.checkbox(
+    "Track entity IDs",
+    value=False,
+    help="""
+    When enabled, each unique entity (person, organization, etc.) is assigned a unique ID
+    (e.g., PERSON_1, PERSON_2) instead of a generic placeholder (e.g., <PERSON>).
+    The same person mentioned multiple times will have the same ID.
+    """,
+)
+
 
 
 
@@ -175,6 +187,10 @@ with st.sidebar.expander("Choose entities to look for", expanded=False):
 ########  Initialize Debug log ##########
 if "_debug_text" not in st.session_state:
     st.session_state._debug_text = ""
+
+# Initialize entity mappings storage
+if "file_entity_mappings" not in st.session_state:
+    st.session_state.file_entity_mappings = {}
     
 
 def log(msg: str):
@@ -419,41 +435,57 @@ if run_btn:
         # --- ANONYMIZE ---
         if st_operator in ("highlight", "synthesize"):
             raise ValueError(f"Operator {st_operator} not supported for batch anonymization.")
-        st_anonymize_results = anonymize(
-            text=st_text,
-            operator=st_operator,
-            mask_char=st_mask_char,
-            number_of_chars=st_number_of_chars,
-            encrypt_key=st_encrypt_key,
-            analyze_results=st_analyze_results,
-        )
-
-        clean_text = _unescape_markers(st_anonymize_results.text)
+        
+        # Use entity tracking if enabled
+        if st_track_entity_ids:
+            clean_text, entity_mapping = anonymize_with_entity_tracking(
+                text=st_text,
+                operator=st_operator,
+                mask_char=st_mask_char,
+                number_of_chars=st_number_of_chars,
+                encrypt_key=st_encrypt_key,
+                analyze_results=st_analyze_results,
+            )
+            # Store mapping for later display
+            st.session_state.file_entity_mappings[uf.name] = entity_mapping
+        else:
+            st_anonymize_results = anonymize(
+                text=st_text,
+                operator=st_operator,
+                mask_char=st_mask_char,
+                number_of_chars=st_number_of_chars,
+                encrypt_key=st_encrypt_key,
+                analyze_results=st_analyze_results,
+            )
+            clean_text = st_anonymize_results.text
+        
+        # Unescape markers for all file types
+        clean_text = _unescape_markers(clean_text)
         
         out_path = out_dir / uf.name
 
         # --- WRITE OUTPUT ---
         try:
             if uf.name.endswith(".csv"):
-                df       = pd.DataFrame(st_anonymize_results.text)
+                df       = pd.DataFrame(clean_text)
                 out_path = out_path.with_suffix(".csv")
                 df.to_csv(out_path, index=False)
 
             elif uf.name.endswith(".tsv"):
-                df       = pd.DataFrame(st_anonymize_results.text)
+                df       = pd.DataFrame(clean_text)
                 out_path = out_path.with_suffix(".tsv")
                 df.to_csv(out_path, sep="\t", index=False)
 
             elif uf.name.endswith(".txt"):
                 with open(out_path.with_suffix(".txt"), "w", encoding="utf-8") as f:
-                    f.write(st_anonymize_results.text)
+                    f.write(clean_text)
 
             elif uf.name.endswith(".log"):
                 with open(out_path.with_suffix(".log"), "w", encoding="utf-8") as f:
-                    f.write(st_anonymize_results.text)
+                    f.write(clean_text)
 
             elif uf.name.endswith(".jsonl"):
-                df = pd.DataFrame(st_anonymize_results.text)
+                df = pd.DataFrame(clean_text)
                 out_path = out_path.with_suffix(".jsonl")
                 df.to_json(out_path, orient="records", lines=True)
 
@@ -468,7 +500,7 @@ if run_btn:
 
             elif uf.name.endswith(".doc") or uf.name.endswith(".docx"):
                 doc = _docx.Document()
-                doc.add_paragraph(st_anonymize_results.text)
+                doc.add_paragraph(clean_text)
                 out_path = out_path.with_suffix(".docx")
                 doc.save(out_path)
 
@@ -512,3 +544,31 @@ if run_btn:
 
     with st.expander("📝 Log", expanded=False):
         st.text(st.session_state.get("_debug_text", ""))
+
+    # Display entity mappings if entity tracking was enabled
+    if st_track_entity_ids and st.session_state.file_entity_mappings:
+        with st.expander("🔍 Entity ID Mappings", expanded=True):
+            st.info("""
+            Each unique entity has been assigned a unique ID. 
+            The same person mentioned multiple times will have the same ID.
+            This allows you to track which mentions refer to the same entity.
+            """)
+            
+            file_mappings = st.session_state.get("file_entity_mappings", {})
+            
+            for filename, mapping in file_mappings.items():
+                st.write(f"**📄 {filename}**")
+                
+                # Group by entity type
+                grouped = {}
+                for entity_text, entity_id in mapping.items():
+                    entity_type = entity_id.split("_")[0]
+                    if entity_type not in grouped:
+                        grouped[entity_type] = []
+                    grouped[entity_type].append((entity_text, entity_id))
+                
+                # Display in organized columns
+                for entity_type in sorted(grouped.keys()):
+                    st.write(f"*{entity_type}s:*")
+                    for entity_text, entity_id in grouped[entity_type]:
+                        st.caption(f"  {entity_id:15} ← \"{entity_text}\"")
