@@ -1,17 +1,39 @@
+# =============================================================================
+# STARIST - Python Dependencies
+# =============================================================================
+# Install with: pip install -r requirements.txt
+
+# Core Presidio packages
 presidio-analyzer[transformers]
 presidio-analyzer[stanza]
 presidio-anonymizer
-streamlit
+
+# Web framework
+streamlit>=1.39.0
 streamlit-tags
-pandas
-python-dotenv
 st-annotated-text
-torch
-flair
-openai
-watchdog
-python-docx
-PyPDF2
+
+# Data processing
+pandas>=2.0.0
 openpyxl
 xlrd
+
+# Document processing
+python-docx
+docx2txt
+PyPDF2
+
+# NLP/ML models
+torch
+flair
+spacy>=3.7.0
+
+# Utilities
+python-dotenv
+watchdog
+
+# Optional: OpenAI integration
+openai
+
+# Optional: Azure Text Analytics
 #azure-ai-textanalytics

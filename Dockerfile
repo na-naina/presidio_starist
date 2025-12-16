@@ -37,4 +37,4 @@ WORKDIR $HOME/app
 # Copy the current directory contents into the container at $HOME/app setting the owner to the user
 COPY --chown=user . $HOME/app
 
-CMD ["poetry", "run", "streamlit", "run", "presidio_streamlit.py", "--server.port=7860", "--server.address=0.0.0.0"]
+CMD ["poetry", "run", "streamlit", "run", "1_📂_Batch_Anonymization.py", "--server.port=7860", "--server.address=0.0.0.0"]
