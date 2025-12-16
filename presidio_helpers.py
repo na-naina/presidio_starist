@@ -464,13 +464,20 @@ def anonymize_with_entity_tracking(
             entity_counters[entity_type] = counter
             entity_mapping[normalized_key] = f"{entity_type}_{counter}"
     
-    # Second pass: replace text with entity IDs (process in reverse to maintain indices)
+    # Third pass: replace text with entity IDs (process in reverse to maintain indices)
     result_text = text
     sorted_results = sorted(analyze_results, key=lambda r: r.start, reverse=True)
+    
+    # Track the start position of the last replacement we made
+    last_replacement_start = len(text)
     
     for i, result in enumerate(sorted_results):
         # Skip generic descriptors
         if (result.start, result.end) in entities_to_skip:
+            continue
+        
+        # Skip overlapping entities (if this entity overlaps with one we already processed)
+        if result.end > last_replacement_start:
             continue
             
         entity_text = text[result.start:result.end]
@@ -480,15 +487,13 @@ def anonymize_with_entity_tracking(
         # Preserve possessive form: "Julian's" → "PERSON_1's"
         replacement = entity_id + possessive
         
-        # Check if the next entity (in original order) is immediately adjacent
+        # Check if this entity ends exactly where the next replacement started
         # If so, add a space to prevent fusion like "AU_ABN_1PERSON_2"
-        if i > 0:  # Check previous entity in the sorted list (next in document order)
-            prev_result = sorted_results[i - 1]
-            # If this entity ends exactly where the next begins, add space
-            if result.end == prev_result.start:
-                replacement = replacement + " "
+        if result.end == last_replacement_start:
+            replacement = replacement + " "
         
         result_text = result_text[:result.start] + replacement + result_text[result.end:]
+        last_replacement_start = result.start
     
     return result_text, entity_mapping
 
