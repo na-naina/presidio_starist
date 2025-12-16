@@ -1,0 +1,9 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=STARIST
+Comment=Stalking Threat AI Recognition and Identification Support Tool
+Exec=bash -c 'cd "%{INSTDIR}" && ./run_app.sh'
+Terminal=true
+Icon=application-x-executable
+Categories=Utility;

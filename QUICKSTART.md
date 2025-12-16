@@ -1,8 +1,8 @@
 # Quick Start Guide
 
-## Ubuntu 24.04 - 3 Steps
+## Ubuntu 24.04 - 2 Steps
 
-### Step 1: Clone and Install
+### Step 1: Install
 ```bash
 git clone <repository-url>
 cd presidio_demo-1
@@ -10,14 +10,19 @@ chmod +x install_ubuntu.sh
 ./install_ubuntu.sh
 ```
 
-### Step 2: Start the Application
+### Step 2: Run
+Double-click **`run_app.sh`** (or run `streamlit run 1_📂_Batch_Anonymization.py`)
+
+The application opens automatically at **http://localhost:8501**
+
+---
+
+## Manual Start (Terminal)
+
 ```bash
 source presidio-venv/bin/activate
 streamlit run 1_📂_Batch_Anonymization.py
 ```
-
-### Step 3: Open Browser
-Navigate to **http://localhost:8501**
 
 ---
 

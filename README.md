@@ -18,6 +18,8 @@ A powerful PII (Personally Identifiable Information) detection and anonymization
 
 ## 🚀 Quick Start (Ubuntu 24.04)
 
+### Method 1: Quick Setup (3 Commands)
+
 ```bash
 # Clone the repository
 git clone <repository-url>
@@ -31,6 +33,10 @@ chmod +x install_ubuntu.sh
 source presidio-venv/bin/activate
 streamlit run 1_📂_Batch_Anonymization.py
 ```
+
+### Method 2: Double-Click to Launch (After Installation)
+
+Once `install_ubuntu.sh` completes, you can double-click **`run_app.sh`** to launch the application.
 
 The application will open in your browser at **http://localhost:8501**
 
