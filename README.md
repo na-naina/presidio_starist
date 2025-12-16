@@ -1,13 +1,3 @@
----
-title: Presidio Demo
-emoji: 🅿
-colorFrom: purple
-colorTo: gray
-sdk: docker
-app_port: 7860
-license: mit
----
-
 # STARIST - Presidio De-identification Tool
 
 **STARIST: Stalking Threat AI Recognition (and) Identification Support Tool**
