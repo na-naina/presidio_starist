@@ -54,6 +54,10 @@ RUN pip install torch torchvision torchaudio --index-url https://download.pytorc
 # Use --ignore-installed to handle system packages in CUDA image
 RUN pip install --no-cache-dir --ignore-installed -r requirements.txt
 
+# IMPORTANT: Downgrade transformers for flair compatibility
+# LayoutLMv2FeatureExtractor was removed in transformers 4.41+, breaking flair
+RUN pip install --no-cache-dir transformers==4.40.2 tokenizers==0.19.1
+
 # Download spaCy models
 RUN python -m spacy download en_core_web_lg && \
     python -m spacy download en_core_web_sm
