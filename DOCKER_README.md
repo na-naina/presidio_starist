@@ -84,22 +84,39 @@ docker run --rm --gpus all nvidia/cuda:12.1.0-base-ubuntu22.04 nvidia-smi
 
 ## Installation
 
-### Option 1: Build from Source (Recommended)
+### Option 1: Pull Pre-built Image (Fastest)
 
-This method builds the Docker image with all ML models pre-downloaded.
+Pull the ready-to-use image from GitHub Container Registry:
 
 ```bash
-# Clone or copy the project
-cd /path/to/presidio_starist
+# Pull the image (~8GB download)
+docker pull ghcr.io/na-naina/presidio_starist:gpu-latest
 
-# Build the Docker image (takes 15-30 minutes)
+# Tag it for docker-compose compatibility
+docker tag ghcr.io/na-naina/presidio_starist:gpu-latest starist:gpu
+
+# Verify
+docker images | grep starist
+```
+
+### Option 2: Build from Source
+
+Build the image locally with all ML models pre-downloaded.
+
+```bash
+# Clone the repository
+git clone https://github.com/na-naina/presidio_starist.git
+cd presidio_starist
+git checkout docker-deployment
+
+# Build the Docker image (takes 15-30 minutes with good internet)
 docker compose build
 
 # Verify the image was created
 docker images | grep starist
 ```
 
-### Option 2: Load Pre-built Image
+### Option 3: Load from File
 
 If you have a pre-exported Docker image file:
 
@@ -134,6 +151,7 @@ docker\start.bat
 
 ### Manual Start
 
+**If using docker-compose (Option 2 or 3):**
 ```bash
 # Start the container
 docker compose up -d
@@ -143,6 +161,22 @@ docker compose logs -f
 
 # Check status
 docker compose ps
+```
+
+**If using pulled image (Option 1):**
+```bash
+# Run directly with GPU support
+docker run -d --name starist \
+  --gpus all \
+  -p 8501:8501 \
+  --restart unless-stopped \
+  ghcr.io/na-naina/presidio_starist:gpu-latest
+
+# View logs
+docker logs -f starist
+
+# Stop
+docker stop starist
 ```
 
 ### Access the Application
