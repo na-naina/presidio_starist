@@ -1,0 +1,64 @@
+# =============================================================================
+# STARIST - Docker Ignore File
+# =============================================================================
+# Files to exclude from Docker build context
+# =============================================================================
+
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Virtual environments
+venv/
+env/
+.venv/
+presidio-venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Streamlit cache
+.streamlit/
+
+# Model caches (downloaded during build)
+.cache/
+.flair/
+
+# Logs
+*.log
+
+# Backup
+Backup/
+
+# Test files
+test_*.py
+*_test.py
+
+# Documentation (not needed in container)
+*.md
+!DOCKER_README.md
+
+# Poetry lock (using requirements.txt instead)
+poetry.lock
+
+# Example env file
+.env.example

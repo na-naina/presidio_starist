@@ -1,0 +1,59 @@
+# =============================================================================
+# STARIST - Docker Compose Configuration
+# =============================================================================
+# GPU-enabled deployment for police data anonymization
+# =============================================================================
+
+services:
+  starist:
+    build:
+      context: .
+      dockerfile: Dockerfile.gpu
+    image: starist:gpu
+    container_name: starist-anonymizer
+
+    # NVIDIA GPU support
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+    # Port mapping
+    ports:
+      - "8501:8501"
+
+    # Environment variables
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - STREAMLIT_SERVER_PORT=8501
+      - STREAMLIT_SERVER_ADDRESS=0.0.0.0
+      - STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
+
+    # Restart policy
+    restart: unless-stopped
+
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+    # Optional: Mount volume for persistent uploads/exports
+    # Uncomment if you want to persist data outside the container
+    # volumes:
+    #   - ./data:/app/data
+
+# =============================================================================
+# Usage:
+#   Build:  docker compose build
+#   Start:  docker compose up -d
+#   Stop:   docker compose down
+#   Logs:   docker compose logs -f
+#   Status: docker compose ps
+# =============================================================================
