@@ -39,11 +39,10 @@ nvidia-smi
 
 ### 2. Install Docker
 
-```bash
-# Remove old versions
-sudo apt remove docker docker-engine docker.io containerd runc
+**If Docker is already installed, skip to step 3.** Check with: `docker --version`
 
-# Install Docker
+```bash
+# Install Docker (official script handles everything)
 curl -fsSL https://get.docker.com -o get-docker.sh
 sudo sh get-docker.sh
 
@@ -89,7 +88,7 @@ docker run --rm --gpus all nvidia/cuda:12.1.0-base-ubuntu22.04 nvidia-smi
 Pull the ready-to-use image from GitHub Container Registry:
 
 ```bash
-# Pull the image (~8GB download)
+# Pull the image (~20GB download, ~25GB on disk)
 docker pull ghcr.io/na-naina/presidio_starist:gpu-latest
 
 # Tag it for docker-compose compatibility
